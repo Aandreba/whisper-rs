@@ -1,5 +1,5 @@
-use std::ffi::c_int;
 use std::sync::Arc;
+use std::{ffi::c_int, ptr::dangling};
 
 use crate::{FullParams, WhisperError, WhisperInnerContext, WhisperTokenId};
 
@@ -290,20 +290,18 @@ impl WhisperState {
     ///                            const float * samples,
     ///                                    int   n_samples)`
     pub fn full(&mut self, params: FullParams, data: &[f32]) -> Result<(), WhisperError> {
-        if data.is_empty() {
-            // can randomly trigger segmentation faults if we don't check this
-            return Err(WhisperError::NoSamples);
-        }
+        let (ptr, len) = match data.is_empty() {
+            true => (dangling(), 0),
+            false => (
+                data.as_ptr(),
+                c_int::try_from(data.len()).map_err(|_| WhisperError::SpectrogramNotInitialized)?,
+            ),
+        };
 
         let ret = unsafe {
-            whisper_rs_sys::whisper_full_with_state(
-                self.ctx.ctx,
-                self.ptr,
-                params.fp,
-                data.as_ptr(),
-                data.len() as c_int,
-            )
+            whisper_rs_sys::whisper_full_with_state(self.ctx.ctx, self.ptr, params.fp, ptr, len)
         };
+
         if ret == -1 {
             Err(WhisperError::UnableToCalculateSpectrogram)
         } else if ret == 7 {
